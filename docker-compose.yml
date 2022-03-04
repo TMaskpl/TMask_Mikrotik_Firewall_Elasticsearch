@@ -1,0 +1,58 @@
+version: "2.0"
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.15.0 
+    environment:
+      - TZ=Europe/Warsaw
+      - cluster.name=opensearch-cluster
+      - node.name=elasticsearch
+      - discovery.seed_hosts=elasticsearch
+      - cluster.initial_master_nodes=elasticsearch
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx2g" 
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    restart: unless-stopped
+    networks:
+      - docker_elk
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.15.0
+    environment:
+      - TZ=Europe/Warsaw
+      - "monitoring.elasticsearch.hosts=http://elasticsearch:9200"
+      - "http.host=0.0.0.0"
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+      - "5044:5044/udp"
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch 
+    volumes:
+      - "./pipeline:/usr/share/logstash/pipeline"
+    networks:
+      - docker_elk
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.15.0
+    environment:
+      - TZ=Europe/Warsaw
+      - "ELASTICSEARCH_URL=http://elasticsearch:9200"
+    ports:
+      - "5601:5601"
+    links:
+      - elasticsearch
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    networks:
+      - docker_elk
+networks:
+  docker_elk:
+    driver: bridge
