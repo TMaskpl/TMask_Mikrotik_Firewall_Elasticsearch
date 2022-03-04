@@ -6,7 +6,7 @@
 Przekierowujemy logi na Logstash port 5044/udp
 
 
-[code]
+`
 
 input {
     syslog {
@@ -28,4 +28,4 @@ output {
     }
 }
 
-[/code]
+`
