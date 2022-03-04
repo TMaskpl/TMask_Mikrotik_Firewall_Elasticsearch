@@ -1,0 +1,20 @@
+Linux
+
+
+To view the current value for the vm.max_map_count setting, run:
+
+
+grep vm.max_map_count /etc/sysctl.conf
+
+vm.max_map_count=262144
+
+
+To apply the setting on a live system, run:
+
+sysctl -w vm.max_map_count=262144
+
+========================
+
+mkdir esdatadir
+chmod g+rwx esdatadir
+chgrp 0 esdatadir
