@@ -31,13 +31,12 @@ output {
 
 Następnie w Kibanie mamy piękny dashboard który obrazuje z jakich lokalizację mamu próbę dostępu do routera
 
-![2022-03-04_12-57](https://user-images.githubusercontent.com/75216446/156763805-abd3b9c3-197e-43c6-8d6c-628d277608f9.png)
+![elastic1](https://user-images.githubusercontent.com/75216446/157237161-318efe4a-2f12-4677-881c-2438e0a31096.png)
 
 
 
+![elastic2](https://user-images.githubusercontent.com/75216446/157237189-e6559ae4-3b53-4eef-b5b7-33dd9d83efe5.png)
 
-:)
 
 
-![2022-03-04_13-25](https://user-images.githubusercontent.com/75216446/156763828-fce40b94-578c-4181-9962-924d6ea9e5c5.png)
 
