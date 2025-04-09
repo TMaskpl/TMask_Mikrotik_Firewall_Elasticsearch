@@ -11,7 +11,7 @@ ES_INDEX = "windows-logs"
 # Funkcja do odczytu logów z Windows Event Log za pomocą wevtutil
 def read_windows_logs(log_name="System"):
     """
-    Odczytuje logi z Windows Event Log za pomocą narzędzia wevtutil i zwraca je w formacie JSON.
+    Odczytuje logi z Windows Event Log za pomocą wevtutil i zwraca je w formacie JSON.
     """
     cmd = ["wevtutil", "qe", log_name, "/format:xml", "/c:10"]  # Pobiera ostatnie 10 zdarzeń w formacie XML
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -21,16 +21,25 @@ def read_windows_logs(log_name="System"):
         print(f"Błąd podczas odczytu logów za pomocą wevtutil: {stderr.decode('utf-8')}")
         return []
 
-    # Parsowanie logów XML na strukturę JSON
-    logs = []
-    root = ET.fromstring(stdout.decode("utf-8"))
-    for event in root.findall("./Event"):
-        log_entry = {}
-        for field in event.iter():
-            log_entry[field.tag] = field.text
-        logs.append(log_entry)
+    log_entries = []
+    raw_output = stdout.decode("utf-8").strip()
 
-    return logs
+    # Podział danych wyjściowych na poszczególne zdarzenia XML
+    raw_events = raw_output.split("</Event>")
+    for raw_event in raw_events:
+        if raw_event.strip():  # Ignoruj puste linie
+            raw_event = raw_event + "</Event>"  # Dodaj zamykający tag </Event>
+            try:
+                event = ET.fromstring(raw_event)
+                log_entry = {}
+                for field in event.iter():
+                    log_entry[field.tag] = field.text
+                log_entries.append(log_entry)
+            except ET.ParseError as e:
+                print(f"Błąd parsowania zdarzenia: {e}")
+                print(f"Niepoprawne dane XML: {raw_event}")
+
+    return log_entries
 
 # Funkcja do przesyłania logów do Elasticsearch
 def send_to_elasticsearch(log_data):
