@@ -1,45 +1,11 @@
 import subprocess
 import json
 import requests
-import time
 import xml.etree.ElementTree as ET
 
 # Ustawienia Elasticsearch
 ES_HOST = "http://localhost:9200"
 ES_INDEX = "windows-logs"
-
-# Funkcja do odczytu logów z Windows Event Log za pomocą wevtutil
-def read_windows_logs(log_name="System"):
-    """
-    Odczytuje logi z Windows Event Log za pomocą wevtutil i zwraca je w formacie JSON.
-    """
-    cmd = ["wevtutil", "qe", log_name, "/format:xml", "/c:10"]  # Pobiera ostatnie 10 zdarzeń w formacie XML
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
-
-    if process.returncode != 0:
-        print(f"Błąd podczas odczytu logów za pomocą wevtutil: {stderr.decode('utf-8')}")
-        return []
-
-    log_entries = []
-    raw_output = stdout.decode("utf-8").strip()
-
-    # Podział danych wyjściowych na poszczególne zdarzenia XML
-    raw_events = raw_output.split("</Event>")
-    for raw_event in raw_events:
-        if raw_event.strip():  # Ignoruj puste linie
-            raw_event = raw_event + "</Event>"  # Dodaj zamykający tag </Event>
-            try:
-                event = ET.fromstring(raw_event)
-                log_entry = {}
-                for field in event.iter():
-                    log_entry[field.tag] = field.text
-                log_entries.append(log_entry)
-            except ET.ParseError as e:
-                print(f"Błąd parsowania zdarzenia: {e}")
-                print(f"Niepoprawne dane XML: {raw_event}")
-
-    return log_entries
 
 # Funkcja do przesyłania logów do Elasticsearch
 def send_to_elasticsearch(log_data):
@@ -54,14 +20,41 @@ def send_to_elasticsearch(log_data):
     if response.status_code != 201:
         print(f"Błąd podczas przesyłania logów: {response.status_code} - {response.text}")
 
+# Funkcja do odczytu logów w czasie rzeczywistym
+def stream_windows_logs(log_name="System"):
+    """
+    Strumieniuje logi z Windows Event Log w czasie rzeczywistym za pomocą wevtutil.
+    """
+    cmd = ["wevtutil", "qe", log_name, "/format:xml", "/rd:true"]  # Czytaj logi w odwrotnym kierunku (od najnowszych)
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    buffer = ""
+    for line in process.stdout:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Dodawaj linie do bufora XML
+        buffer += line
+
+        # Jeśli linia kończy zdarzenie XML (</Event>), parsuj je
+        if line.endswith("</Event>"):
+            try:
+                event = ET.fromstring(buffer)
+                log_entry = {}
+                for field in event.iter():
+                    log_entry[field.tag] = field.text
+                send_to_elasticsearch(log_entry)  # Wyślij do Elasticsearch
+            except ET.ParseError as e:
+                print(f"Błąd parsowania zdarzenia: {e}")
+            finally:
+                buffer = ""  # Wyczyszczenie bufora po przetworzeniu jednego zdarzenia
+
 if __name__ == "__main__":
     log_name = "System"  # Nazwa dziennika zdarzeń Windows (np. System, Application, Security)
 
-    while True:
-        logs = read_windows_logs(log_name)
-
-        for log in logs:
-            send_to_elasticsearch(log)
-
-        # Oczekuj 60 sekund przed kolejnym odczytem logów
-        time.sleep(60)
+    try:
+        print(f"Rozpoczynam strumieniowanie logów z dziennika '{log_name}'...")
+        stream_windows_logs(log_name)
+    except KeyboardInterrupt:
+        print("Przerwanie strumieniowania logów.")
