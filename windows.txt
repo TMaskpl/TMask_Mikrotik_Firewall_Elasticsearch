@@ -20,7 +20,7 @@ def send_to_elasticsearch(log_data):
     if response.status_code != 201:
         print(f"Błąd podczas przesyłania logów: {response.status_code} - {response.text}")
 
-# Funkcja do odczytu logów w czasie rzeczywistym
+# Funkcja do odczytu i przetwarzania logów w czasie rzeczywistym
 def stream_windows_logs(log_name="System"):
     """
     Strumieniuje logi z Windows Event Log w czasie rzeczywistym za pomocą wevtutil.
@@ -42,8 +42,18 @@ def stream_windows_logs(log_name="System"):
             try:
                 event = ET.fromstring(buffer)
                 log_entry = {}
+                # Parsuj pola główne zdarzenia
                 for field in event.iter():
-                    log_entry[field.tag] = field.text
+                    if field.tag == "EventData":
+                        # Jeśli pole EventData istnieje, przetwarzaj je jako klucz-wartość
+                        event_data = {}
+                        for data in field:
+                            if data.attrib.get("Name"):
+                                event_data[data.attrib["Name"]] = data.text
+                        log_entry["EventData"] = event_data
+                    else:
+                        log_entry[field.tag] = field.text
+
                 send_to_elasticsearch(log_entry)  # Wyślij do Elasticsearch
             except ET.ParseError as e:
                 print(f"Błąd parsowania zdarzenia: {e}")
