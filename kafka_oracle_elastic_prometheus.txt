@@ -1,0 +1,118 @@
+import os
+import json
+import socket
+import logging
+import requests
+from time import sleep
+from datetime import datetime
+from confluent_kafka import Consumer
+import cx_Oracle
+from prometheus_client import start_http_server, Counter, Histogram
+
+# --- Prometheus metrics ---
+messages_consumed = Counter('kafka_messages_consumed_total', 'Messages consumed from Kafka')
+messages_inserted = Counter('oracle_messages_inserted_total', 'Messages inserted into Oracle DB')
+errors_counter = Counter('processing_errors_total', 'Total processing errors')
+
+kafka_processing_time = Histogram('kafka_message_processing_seconds', 'Kafka message processing time')
+oracle_insert_time = Histogram('oracle_insert_seconds', 'Oracle insert time')
+
+# --- Fallback logger ---
+logging.basicConfig(level=logging.INFO)
+stdout_logger = logging.getLogger("fallback")
+
+# --- Elasticsearch logging (manual) ---
+def log_to_elasticsearch(level, message, extra=None):
+    try:
+        es_host = os.getenv("ELASTIC_HOST", "localhost")
+        es_port = os.getenv("ELASTIC_PORT", "9200")
+        index = "kafka-oracle-logs"
+        url = f"http://{es_host}:{es_port}/{index}/_doc"
+
+        payload = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": level,
+            "message": message,
+            "host": socket.gethostname(),
+            **(extra or {})
+        }
+
+        headers = {"Content-Type": "application/json"}
+        requests.post(url, json=payload, headers=headers, timeout=3)
+    except Exception as e:
+        stdout_logger.warning(f"Failed to log to Elasticsearch: {e}")
+
+# --- Kafka config ---
+KAFKA_CONFIG = {
+    'bootstrap.servers': os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"),
+    'group.id': os.getenv("KAFKA_GROUP", "my-kafka-group"),
+    'auto.offset.reset': 'earliest',
+    'security.protocol': 'SASL_SSL',
+    'sasl.mechanism': 'PLAIN',
+    'sasl.username': os.getenv("KAFKA_USERNAME"),
+    'sasl.password': os.getenv("KAFKA_PASSWORD")
+}
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "my_topic")
+
+# --- Oracle config ---
+ORACLE_DSN = cx_Oracle.makedsn(
+    os.getenv("ORACLE_HOST", "oracle"),
+    int(os.getenv("ORACLE_PORT", "1521")),
+    service_name=os.getenv("ORACLE_SERVICE", "orclpdb1")
+)
+ORACLE_USER = os.getenv("ORACLE_USER", "user")
+ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD", "pass")
+
+# --- Start Prometheus metrics server ---
+start_http_server(8000)
+
+# --- Kafka consumer ---
+consumer = Consumer(KAFKA_CONFIG)
+consumer.subscribe([KAFKA_TOPIC])
+
+@kafka_processing_time.time()
+def process_message(msg_value):
+    try:
+        data = json.loads(msg_value)
+        name = data.get("name")
+        value = data.get("value")
+
+        with oracle_insert_time.time():
+            connection = cx_Oracle.connect(ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN)
+            cursor = connection.cursor()
+            cursor.execute(
+                "INSERT INTO my_table (name, value) VALUES (:name, :value)",
+                {"name": name, "value": value}
+            )
+            connection.commit()
+            cursor.close()
+            connection.close()
+
+        log_to_elasticsearch("INFO", "Message inserted into Oracle", {"data": data})
+        messages_inserted.inc()
+    except Exception as e:
+        log_to_elasticsearch("ERROR", f"Failed to process message: {e}")
+        errors_counter.inc()
+
+def main():
+    log_to_elasticsearch("INFO", "Kafka Oracle Consumer started")
+    while True:
+        msg = consumer.poll(1.0)
+        if msg is None:
+            continue
+        if msg.error():
+            log_to_elasticsearch("ERROR", f"Kafka error: {msg.error()}")
+            errors_counter.inc()
+            continue
+
+        try:
+            msg_val = msg.value().decode('utf-8')
+            log_to_elasticsearch("INFO", "Kafka message received", {"raw": msg_val})
+            messages_consumed.inc()
+            process_message(msg_val)
+        except Exception as e:
+            log_to_elasticsearch("ERROR", f"Unexpected error: {e}")
+            errors_counter.inc()
+
+if __name__ == "__main__":
+    main()
