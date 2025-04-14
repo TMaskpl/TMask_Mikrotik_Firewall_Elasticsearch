@@ -2,14 +2,14 @@ import os
 import json
 import socket
 import logging
-import requests
-from time import sleep
-from datetime import datetime
-from confluent_kafka import Consumer
 import cx_Oracle
+from time import sleep
+from kafka import KafkaConsumer
 from prometheus_client import start_http_server, Counter, Histogram
+from datetime import datetime
+from cmreslogging.handlers import CMRESHandler
 
-# --- Prometheus metrics ---
+# Prometheus metrics
 messages_consumed = Counter('kafka_messages_consumed_total', 'Messages consumed from Kafka')
 messages_inserted = Counter('oracle_messages_inserted_total', 'Messages inserted into Oracle DB')
 errors_counter = Counter('processing_errors_total', 'Total processing errors')
@@ -17,44 +17,19 @@ errors_counter = Counter('processing_errors_total', 'Total processing errors')
 kafka_processing_time = Histogram('kafka_message_processing_seconds', 'Kafka message processing time')
 oracle_insert_time = Histogram('oracle_insert_seconds', 'Oracle insert time')
 
-# --- Fallback logger ---
-logging.basicConfig(level=logging.INFO)
-stdout_logger = logging.getLogger("fallback")
+# Elasticsearch logger
+logger = logging.getLogger("kafka_oracle_logger")
+logger.setLevel(logging.INFO)
+logger.addHandler(CMRESHandler(
+    hosts=[{'host': os.getenv("ELASTIC_HOST", "localhost"), 'port': int(os.getenv("ELASTIC_PORT", "9200"))}],
+    auth_type=CMRESHandler.AuthType.NO_AUTH,
+    es_index_name="kafka-oracle-logs",
+    use_ssl=False,
+    raise_on_indexing_exceptions=False,
+    buffer_size=1
+))
 
-# --- Elasticsearch logging (manual) ---
-def log_to_elasticsearch(level, message, extra=None):
-    try:
-        es_host = os.getenv("ELASTIC_HOST", "localhost")
-        es_port = os.getenv("ELASTIC_PORT", "9200")
-        index = "kafka-oracle-logs"
-        url = f"http://{es_host}:{es_port}/{index}/_doc"
-
-        payload = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "level": level,
-            "message": message,
-            "host": socket.gethostname(),
-            **(extra or {})
-        }
-
-        headers = {"Content-Type": "application/json"}
-        requests.post(url, json=payload, headers=headers, timeout=3)
-    except Exception as e:
-        stdout_logger.warning(f"Failed to log to Elasticsearch: {e}")
-
-# --- Kafka config ---
-KAFKA_CONFIG = {
-    'bootstrap.servers': os.getenv("KAFKA_BOOTSTRAP", "localhost:9092"),
-    'group.id': os.getenv("KAFKA_GROUP", "my-kafka-group"),
-    'auto.offset.reset': 'earliest',
-    'security.protocol': 'SASL_SSL',
-    'sasl.mechanism': 'PLAIN',
-    'sasl.username': os.getenv("KAFKA_USERNAME"),
-    'sasl.password': os.getenv("KAFKA_PASSWORD")
-}
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "my_topic")
-
-# --- Oracle config ---
+# Oracle config
 ORACLE_DSN = cx_Oracle.makedsn(
     os.getenv("ORACLE_HOST", "oracle"),
     int(os.getenv("ORACLE_PORT", "1521")),
@@ -63,12 +38,22 @@ ORACLE_DSN = cx_Oracle.makedsn(
 ORACLE_USER = os.getenv("ORACLE_USER", "user")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD", "pass")
 
-# --- Start Prometheus metrics server ---
-start_http_server(8000)
+# Kafka consumer config
+consumer = KafkaConsumer(
+    os.getenv("KAFKA_TOPIC", "my_topic"),
+    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP", "localhost:9092").split(","),
+    security_protocol="SASL_PLAINTEXT",  # Change to "SASL_SSL" if needed
+    sasl_mechanism="PLAIN",
+    sasl_plain_username=os.getenv("KAFKA_USERNAME"),
+    sasl_plain_password=os.getenv("KAFKA_PASSWORD"),
+    auto_offset_reset='earliest',
+    group_id=os.getenv("KAFKA_GROUP", "my-group"),
+    enable_auto_commit=True,
+    value_deserializer=lambda m: m.decode('utf-8')
+)
 
-# --- Kafka consumer ---
-consumer = Consumer(KAFKA_CONFIG)
-consumer.subscribe([KAFKA_TOPIC])
+# Start Prometheus metrics server
+start_http_server(8000)
 
 @kafka_processing_time.time()
 def process_message(msg_value):
@@ -88,30 +73,22 @@ def process_message(msg_value):
             cursor.close()
             connection.close()
 
-        log_to_elasticsearch("INFO", "Message inserted into Oracle", {"data": data})
+        logger.info("Message inserted into Oracle", extra={"data": data})
         messages_inserted.inc()
     except Exception as e:
-        log_to_elasticsearch("ERROR", f"Failed to process message: {e}")
+        logger.error(f"Failed to process message: {str(e)}")
         errors_counter.inc()
 
 def main():
-    log_to_elasticsearch("INFO", "Kafka Oracle Consumer started")
-    while True:
-        msg = consumer.poll(1.0)
-        if msg is None:
-            continue
-        if msg.error():
-            log_to_elasticsearch("ERROR", f"Kafka error: {msg.error()}")
-            errors_counter.inc()
-            continue
-
+    logger.info("Kafka Oracle Consumer started")
+    for msg in consumer:
         try:
-            msg_val = msg.value().decode('utf-8')
-            log_to_elasticsearch("INFO", "Kafka message received", {"raw": msg_val})
+            msg_val = msg.value
+            logger.info("Kafka message received", extra={"raw": msg_val})
             messages_consumed.inc()
             process_message(msg_val)
         except Exception as e:
-            log_to_elasticsearch("ERROR", f"Unexpected error: {e}")
+            logger.error(f"Unexpected error: {str(e)}")
             errors_counter.inc()
 
 if __name__ == "__main__":
