@@ -1,34 +1,52 @@
 from kafka import KafkaConsumer
+from prometheus_client import start_http_server, Counter, Histogram
 import ssl
+import datetime
+import os
+import time
 
-# Dane konfiguracyjne
-KAFKA_BROKER = 'kafka.example.com:9093'
-TOPIC_NAME = 'test-topic'
+# ─── Prometheus metryki ─────────────────────────
+MESSAGE_COUNTER = Counter('kafka_messages_total', 'Ilość odebranych wiadomości z Kafki')
+MESSAGE_LATENCY = Histogram('kafka_message_latency_seconds', 'Czas przetwarzania wiadomości')
 
-# Ścieżki do plików certyfikatów
-SSL_CAFILE = '/path/to/ca.cer'
-SSL_CERTFILE = '/path/to/client.cer'
-SSL_KEYFILE = '/path/to/client.key'
+# ─── Start metryk HTTP ──────────────────────────
+start_http_server(8000)  # Prometheus endpoint http://localhost:8000/metrics
 
-# Tworzenie konsumenta Kafka z SSL
+# ─── Ustawienia SSL do Kafki ────────────────────
+ssl_context = ssl.create_default_context(
+    purpose=ssl.Purpose.SERVER_AUTH,
+    cafile='/path/to/ca.cer'
+)
+ssl_context.load_cert_chain(certfile='/path/to/client.cer', keyfile='/path/to/client.key')
+
+# ─── Kafka Consumer ─────────────────────────────
 consumer = KafkaConsumer(
-    TOPIC_NAME,
-    bootstrap_servers=KAFKA_BROKER,
+    'test-topic',
+    bootstrap_servers='kafka.example.com:9093',
     security_protocol='SSL',
-    ssl_cafile=SSL_CAFILE,
-    ssl_certfile=SSL_CERTFILE,
-    ssl_keyfile=SSL_KEYFILE,
-    group_id='test-consumer-group',
-    auto_offset_reset='earliest',  # zaczynamy od początku
-    enable_auto_commit=True
+    ssl_context=ssl_context,
+    group_id='python-consumer',
+    auto_offset_reset='earliest'
 )
 
-print("Połączono z brokerem, oczekiwanie na wiadomości...")
+print("✅ Kafka Consumer uruchomiony...")
 
-try:
-    for message in consumer:
-        print(f"Odebrano wiadomość: {message.value.decode('utf-8')}")
-except KeyboardInterrupt:
-    print("Zakończono działanie konsumenta.")
-finally:
-    consumer.close()
+# ─── Funkcja: zapis do pliku dziennego ──────────
+def write_log(message: str):
+    today = datetime.datetime.now().strftime('%Y%m%d')
+    log_dir = 'logs'
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f'{today}.log')
+    with open(log_path, 'a') as f:
+        f.write(message + '\n')
+
+# ─── Główna pętla konsumenta ────────────────────
+for msg in consumer:
+    start = time.time()
+
+    text = msg.value.decode('utf-8')
+    print(f"[Kafka] {text}")
+    write_log(text)
+
+    MESSAGE_COUNTER.inc()
+    MESSAGE_LATENCY.observe(time.time() - start)
