@@ -1,25 +1,29 @@
 from kafka import KafkaConsumer
 from prometheus_client import start_http_server, Counter, Histogram
+from elasticsearch import Elasticsearch
 import ssl
 import datetime
 import os
 import time
 
-# ─── Prometheus metryki ─────────────────────────
+# ─── Prometheus metryki ─────────────────────────────
 MESSAGE_COUNTER = Counter('kafka_messages_total', 'Ilość odebranych wiadomości z Kafki')
 MESSAGE_LATENCY = Histogram('kafka_message_latency_seconds', 'Czas przetwarzania wiadomości')
 
-# ─── Start metryk HTTP ──────────────────────────
-start_http_server(8000)  # Prometheus endpoint http://localhost:8000/metrics
+# ─── Start Prometheus endpoint ──────────────────────
+start_http_server(8000)
 
-# ─── Ustawienia SSL do Kafki ────────────────────
+# ─── Elasticsearch klient ───────────────────────────
+es = Elasticsearch(['http://localhost:9200'])
+
+# ─── SSL Kafka setup ────────────────────────────────
 ssl_context = ssl.create_default_context(
     purpose=ssl.Purpose.SERVER_AUTH,
     cafile='/path/to/ca.cer'
 )
 ssl_context.load_cert_chain(certfile='/path/to/client.cer', keyfile='/path/to/client.key')
 
-# ─── Kafka Consumer ─────────────────────────────
+# ─── Kafka Consumer ─────────────────────────────────
 consumer = KafkaConsumer(
     'test-topic',
     bootstrap_servers='kafka.example.com:9093',
@@ -31,22 +35,34 @@ consumer = KafkaConsumer(
 
 print("✅ Kafka Consumer uruchomiony...")
 
-# ─── Funkcja: zapis do pliku dziennego ──────────
+# ─── Funkcja zapisu do pliku logu ───────────────────
 def write_log(message: str):
-    today = datetime.datetime.now().strftime('%Y%m%d')
+    now = datetime.datetime.now()
+    today = now.strftime('%Y%m%d')
+    timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f'{today}.log')
     with open(log_path, 'a') as f:
-        f.write(message + '\n')
+        f.write(f"[{timestamp}] {message}\n")
 
-# ─── Główna pętla konsumenta ────────────────────
+# ─── Funkcja eksportu do Elasticsearch ──────────────
+def export_to_elasticsearch(message: str):
+    now = datetime.datetime.utcnow()
+    doc = {
+        'timestamp': now.isoformat(),
+        'message': message
+    }
+    es.index(index='kafka-logs', document=doc)
+
+# ─── Pętla odbioru wiadomości ───────────────────────
 for msg in consumer:
     start = time.time()
 
     text = msg.value.decode('utf-8')
     print(f"[Kafka] {text}")
     write_log(text)
+    export_to_elasticsearch(text)
 
     MESSAGE_COUNTER.inc()
     MESSAGE_LATENCY.observe(time.time() - start)
