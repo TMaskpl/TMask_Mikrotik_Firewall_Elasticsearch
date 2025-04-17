@@ -1,6 +1,6 @@
 from kafka import KafkaConsumer
 from prometheus_client import start_http_server, Counter, Histogram
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, ElasticsearchException
 import ssl
 import datetime
 import os
@@ -35,25 +35,33 @@ consumer = KafkaConsumer(
 
 print("✅ Kafka Consumer uruchomiony...")
 
-# ─── Funkcja zapisu do pliku logu ───────────────────
-def write_log(message: str):
-    now = datetime.datetime.now()
-    today = now.strftime('%Y%m%d')
-    timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+# ─── Pomocnicze ─────────────────────────────────────
+def now_str():
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+def log_file_path():
+    today = datetime.datetime.now().strftime('%Y%m%d')
     log_dir = 'logs'
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, f'{today}.log')
-    with open(log_path, 'a') as f:
-        f.write(f"[{timestamp}] {message}\n")
+    return os.path.join(log_dir, f'{today}.log')
+
+# ─── Funkcja zapisu do logu ─────────────────────────
+def write_log(message: str):
+    with open(log_file_path(), 'a') as f:
+        f.write(f"[{now_str()}] {message}\n")
 
 # ─── Funkcja eksportu do Elasticsearch ──────────────
 def export_to_elasticsearch(message: str):
-    now = datetime.datetime.utcnow()
-    doc = {
-        'timestamp': now.isoformat(),
-        'message': message
-    }
-    es.index(index='kafka-logs', document=doc)
+    try:
+        now = datetime.datetime.utcnow()
+        doc = {
+            'timestamp': now.isoformat(),
+            'message': message
+        }
+        es.index(index='kafka-logs', document=doc)
+    except ElasticsearchException as e:
+        error_msg = f"⚠️ Błąd eksportu do Elasticsearch: {str(e)}"
+        write_log(error_msg)
 
 # ─── Pętla odbioru wiadomości ───────────────────────
 for msg in consumer:
