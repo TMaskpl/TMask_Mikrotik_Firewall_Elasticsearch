@@ -9,6 +9,7 @@ import time
 # ─── Prometheus metryki ─────────────────────────────
 MESSAGE_COUNTER = Counter('kafka_messages_total', 'Ilość odebranych wiadomości z Kafki')
 MESSAGE_LATENCY = Histogram('kafka_message_latency_seconds', 'Czas przetwarzania wiadomości')
+ES_WRITE_TIME = Histogram('elasticsearch_write_duration_seconds', 'Czas trwania zapisu jednej wiadomości do Elasticsearch')
 
 # ─── Start Prometheus endpoint ──────────────────────
 start_http_server(8000)
@@ -58,7 +59,8 @@ def export_to_elasticsearch(message: str):
             'timestamp': now.isoformat(),
             'message': message
         }
-        es.index(index='kafka-logs', document=doc)
+        with ES_WRITE_TIME.time():  # ⏱️ Pomiar czasu zapisu
+            es.index(index='kafka-logs', document=doc)
     except ElasticsearchException as e:
         error_msg = f"⚠️ Błąd eksportu do Elasticsearch: {str(e)}"
         write_log(error_msg)
