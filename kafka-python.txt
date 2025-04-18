@@ -1,21 +1,33 @@
 from kafka import KafkaConsumer
 from prometheus_client import start_http_server, Counter, Histogram
 from elasticsearch import Elasticsearch, ElasticsearchException
+from requests.auth import HTTPBasicAuth
+import requests
 import ssl
 import datetime
 import os
 import time
+import json
 
 # ─── Prometheus metryki ─────────────────────────────
 MESSAGE_COUNTER = Counter('kafka_messages_total', 'Ilość odebranych wiadomości z Kafki')
 MESSAGE_LATENCY = Histogram('kafka_message_latency_seconds', 'Czas przetwarzania wiadomości')
-ES_WRITE_TIME = Histogram('elasticsearch_write_duration_seconds', 'Czas trwania zapisu jednej wiadomości do Elasticsearch')
+ES_WRITE_TIME = Histogram('elasticsearch_write_duration_seconds', 'Czas zapisu do Elasticsearch')
+API_SEND_TIME = Histogram('api_send_duration_seconds', 'Czas wysyłki do API')
+TOKEN_FETCH_TIME = Histogram('token_fetch_duration_seconds', 'Czas pobierania tokenu OAuth')
 
 # ─── Start Prometheus endpoint ──────────────────────
 start_http_server(8000)
 
 # ─── Elasticsearch klient ───────────────────────────
 es = Elasticsearch(['http://localhost:9200'])
+
+# ─── OAuth Config ───────────────────────────────────
+OAUTH_URL = "https://api.url/oauth/token"
+API_URL = "https://api.url/data-endpoint"
+CLIENT_ID = "client_id"
+CLIENT_SECRET = "client_secret"
+token = None  # globalny token
 
 # ─── SSL Kafka setup ────────────────────────────────
 ssl_context = ssl.create_default_context(
@@ -46,12 +58,26 @@ def log_file_path():
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, f'{today}.log')
 
-# ─── Funkcja zapisu do logu ─────────────────────────
 def write_log(message: str):
     with open(log_file_path(), 'a') as f:
         f.write(f"[{now_str()}] {message}\n")
 
-# ─── Funkcja eksportu do Elasticsearch ──────────────
+# ─── Token OAuth2 ───────────────────────────────────
+@TOKEN_FETCH_TIME.time()
+def get_oauth_token():
+    auth = HTTPBasicAuth(CLIENT_ID, CLIENT_SECRET)
+    data = {'grant_type': 'client_credentials'}
+    try:
+        response = requests.post(OAUTH_URL, auth=auth, data=data)
+        response.raise_for_status()
+        token_data = response.json()
+        return token_data['access_token']
+    except Exception as e:
+        write_log(f"❌ Błąd pobierania tokenu: {e}")
+        raise
+
+# ─── Elasticsearch Export ───────────────────────────
+@ES_WRITE_TIME.time()
 def export_to_elasticsearch(message: str):
     try:
         now = datetime.datetime.utcnow()
@@ -59,20 +85,50 @@ def export_to_elasticsearch(message: str):
             'timestamp': now.isoformat(),
             'message': message
         }
-        with ES_WRITE_TIME.time():  # ⏱️ Pomiar czasu zapisu
-            es.index(index='kafka-logs', document=doc)
+        es.index(index='kafka-logs', document=doc)
     except ElasticsearchException as e:
-        error_msg = f"⚠️ Błąd eksportu do Elasticsearch: {str(e)}"
-        write_log(error_msg)
+        write_log(f"⚠️ Błąd eksportu do Elasticsearch: {e}")
 
-# ─── Pętla odbioru wiadomości ───────────────────────
+# ─── API Send ───────────────────────────────────────
+@API_SEND_TIME.time()
+def send_to_api(message: dict, token: str):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(API_URL, headers=headers, json=message)
+    response.raise_for_status()
+
+def send_to_api_with_retry(message: dict):
+    global token
+    try:
+        send_to_api(message, token)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            write_log("🔄 Token wygasł. Odświeżanie...")
+            token = get_oauth_token()
+            send_to_api(message, token)
+        else:
+            write_log(f"❌ Błąd API: {e}")
+    except Exception as e:
+        write_log(f"⚠️ Inny błąd API: {e}")
+
+# ─── Główna pętla aplikacji ─────────────────────────
+token = get_oauth_token()
+
 for msg in consumer:
     start = time.time()
 
-    text = msg.value.decode('utf-8')
-    print(f"[Kafka] {text}")
-    write_log(text)
-    export_to_elasticsearch(text)
+    try:
+        text = msg.value.decode('utf-8')
+        write_log(text)
+        export_to_elasticsearch(text)
 
-    MESSAGE_COUNTER.inc()
-    MESSAGE_LATENCY.observe(time.time() - start)
+        json_data = json.loads(text)
+        send_to_api_with_retry(json_data)
+
+        MESSAGE_COUNTER.inc()
+        MESSAGE_LATENCY.observe(time.time() - start)
+
+    except Exception as e:
+        write_log(f"❌ Błąd przetwarzania wiadomości: {e}")
