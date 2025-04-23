@@ -1,0 +1,83 @@
+import json
+
+# Ścieżka do pliku JSON
+json_file_path = 'data.json'
+
+def read_json_file(file_path):
+    """
+    Wczytuje plik JSON i zwraca jego zawartość jako słownik lub listę.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+            if not content.strip():
+                print("Błąd: Plik JSON jest pusty!")
+                return None
+            print("Zawartość pliku JSON:")
+            print(content)
+            return json.loads(content)
+    except FileNotFoundError:
+        print(f"Błąd: Plik {file_path} nie istnieje!")
+        return None
+    except UnicodeDecodeError:
+        print("Błąd: Problem z kodowaniem pliku. Upewnij się, że plik jest w formacie UTF-8.")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Błąd dekodowania JSON: {e}")
+        return None
+
+def extract_json_fields(data):
+    """
+    Wyszukuje pola w danych JSON i przypisuje ich wartości do zmiennych.
+    Zwraca słownik z wartościami pól.
+    """
+    if not data:
+        print("Brak danych do przetworzenia!")
+        return None
+
+    result = {}
+    
+    try:
+        # Przypisanie prostych pól
+        result['id'] = data.get('id')
+        result['poleA'] = data.get('poleA')
+        result['poleB'] = data.get('poleB')
+        
+        # Obsługa zagnieżdżonej listy 'relacja'
+        result['relacja'] = []
+        if 'relacja' in data and isinstance(data['relacja'], list):
+            for rel in data['relacja']:
+                rel_data = {
+                    'idrel': rel.get('idrel'),
+                    'sysrel': rel.get('sysrel')
+                }
+                result['relacja'].append(rel_data)
+        
+        return result
+    except KeyError as e:
+        print(f"Błąd: Brak klucza {e} w danych JSON!")
+        return None
+    except Exception as e:
+        print(f"Błąd podczas przetwarzania danych JSON: {e}")
+        return None
+
+def main():
+    # Wczytaj JSON
+    data = read_json_file(json_file_path)
+    if not data:
+        return
+
+    # Jeśli JSON zawiera listę obiektów, przetwórz każdy z nich
+    if isinstance(data, list):
+        for item in data:
+            extracted_data = extract_json_fields(item)
+            if extracted_data:
+                print("Wyodrębnione dane:", extracted_data)
+    else:
+        # Przetwórz pojedynczy obiekt
+        extracted_data = extract_json_fields(data)
+        if extracted_data:
+            print("Wyodrębnione dane:", extracted_data)
+
+if __name__ == "__main__":
+    main()
