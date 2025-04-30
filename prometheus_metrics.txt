@@ -1,0 +1,35 @@
+from prometheus_client import start_http_server, Gauge
+import psutil
+import time
+import threading
+
+# Prometheus metrics
+cpu_usage = Gauge('app_cpu_usage_percent', 'CPU usage percentage')
+memory_usage = Gauge('app_memory_usage_mb', 'Memory usage in MB')
+io_read = Gauge('app_io_read_bytes', 'I/O read bytes')
+io_write = Gauge('app_io_write_bytes', 'I/O write bytes')
+net_sent = Gauge('app_net_sent_bytes', 'Network sent bytes')
+net_recv = Gauge('app_net_recv_bytes', 'Network received bytes')
+
+def collect_resource_metrics():
+    process = psutil.Process()
+    while True:
+        try:
+            cpu_usage.set(process.cpu_percent(interval=None))
+            memory_usage.set(process.memory_info().rss / 1024 / 1024)  # MB
+
+            io = process.io_counters()
+            io_read.set(io.read_bytes)
+            io_write.set(io.write_bytes)
+
+            net = psutil.net_io_counters()
+            net_sent.set(net.bytes_sent)
+            net_recv.set(net.bytes_recv)
+
+            time.sleep(5)
+        except Exception as e:
+            print(f"Resource metric error: {e}")
+
+def start_metrics_exporter(port=8000):
+    start_http_server(port)
+    threading.Thread(target=collect_resource_metrics, daemon=True).start()
