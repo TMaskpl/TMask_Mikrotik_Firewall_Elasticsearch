@@ -1,0 +1,156 @@
+# TCP
+import socket
+
+def sprawdz_port(host, port):
+    """Sprawdza, czy port TCP jest otwarty na danym hoście."""
+    try:
+        # Utwórz gniazdo TCP
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Ustaw krótki limit czasu na próbę połączenia
+            s.settimeout(1)
+            # Spróbuj nawiązać połączenie z hostem i portem
+            result = s.connect_ex((host, port))
+            if result == 0:
+                print(f"Port {port} na hoście {host} jest otwarty.")
+            else:
+                print(f"Port {port} na hoście {host} jest zamknięty.")
+    except socket.gaierror:
+        print(f"Nie można rozpoznać hosta: {host}")
+    except socket.error as e:
+        print(f"Wystąpił błąd gniazda: {e}")
+
+if __name__ == "__main__":
+    host = input("Podaj adres IP lub nazwę hosta: ")
+    try:
+        port = int(input("Podaj numer portu TCP: "))
+        if 0 <= port <= 65535:
+            sprawdz_port(host, port)
+        else:
+            print("Numer portu musi być w zakresie od 0 do 65535.")
+    except ValueError:
+        print("Nieprawidłowy numer portu.")
+
+
+# UDP
+import socket
+
+def sprawdz_port_udp(host, port):
+    """Próbuje wysłać pakiet UDP na dany host i port."""
+    try:
+        # Utwórz gniazdo UDP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # Ustaw krótki limit czasu na operacje gniazda
+            s.settimeout(1)
+            message = b"Czy ktos tam jest?"  # Przykładowa wiadomość
+            address = (host, port)
+
+            # Wyślij pakiet danych
+            bytes_sent = s.sendto(message, address)
+            print(f"Wysłano {bytes_sent} bajtów do {host}:{port} (UDP).")
+
+            # Spróbuj odebrać odpowiedź (opcjonalne)
+            try:
+                data, server = s.recvfrom(1024)
+                print(f"Odebrano odpowiedź od {server}: {data.decode()}")
+            except socket.timeout:
+                print("Brak odpowiedzi w określonym czasie.")
+            except ConnectionRefusedError:
+                print("Połączenie odrzucone (ICMP Port Unreachable). Firewall może blokować.")
+
+    except socket.gaierror:
+        print(f"Nie można rozpoznać hosta: {host}")
+    except socket.error as e:
+        print(f"Wystąpił błąd gniazda: {e}")
+
+if __name__ == "__main__":
+    host = input("Podaj adres IP lub nazwę hosta: ")
+    try:
+        port = int(input("Podaj numer portu UDP: "))
+        if 0 <= port <= 65535:
+            sprawdz_port_udp(host, port)
+        else:
+            print("Numer portu musi być w zakresie od 0 do 65535.")
+    except ValueError:
+        print("Nieprawidłowy numer portu.")
+
+
+# URL
+
+import requests
+import urllib3
+from requests.exceptions import ConnectionError, Timeout
+
+def sprawdz_dostepnosc_url(url):
+    """
+    Sprawdza, czy dany URL jest dostępny, wysyłając żądanie HTTP HEAD.
+
+    Args:
+        url (str): URL do sprawdzenia.
+
+    Returns:
+        bool: True, jeśli URL jest dostępny (zwraca kod stanu 2xx lub 3xx), False w przeciwnym razie.
+              None, jeśli wystąpi błąd (np. nieprawidłowy URL, błąd połączenia).
+    """
+    try:
+        # Użyj HEAD, aby zminimalizować transfer danych.  Nie pobieramy całej zawartości.
+        response = requests.head(url, timeout=5)  # Ustaw limit czasu na 5 sekund
+
+        # Sprawdź, czy kod stanu jest z zakresu 200-299 (OK) lub 300-399 (przekierowanie)
+        if 200 <= response.status_code < 400:
+            print(f"URL: {url} jest dostępny. Kod statusu: {response.status_code}")
+            return True
+        else:
+            print(f"URL: {url} jest niedostępny. Kod statusu: {response.status_code}")
+            return False
+
+    except ConnectionError as e:
+        print(f"Błąd połączenia podczas sprawdzania {url}: {e}")
+        return None  # Zwróć None, aby wskazać błąd
+
+    except Timeout as e:
+        print(f"Przekroczono limit czasu podczas sprawdzania {url}: {e}")
+        return None
+
+    except requests.exceptions.RequestException as e:
+        # requests.exceptions.RequestException jest bazowym wyjątkiem dla wszystkich
+        # wyjątków, które mogą zostać zgłoszone przez requests.
+        print(f"Wystąpił błąd podczas sprawdzania {url}: {e}")
+        return None  # Zwróć None dla innych błędów
+
+
+
+def main():
+    """
+    Główna funkcja programu.  Pobiera URL od użytkownika i sprawdza jego dostępność.
+    """
+    while True:
+        url = input("Podaj URL do sprawdzenia (lub 'koniec' aby zakończyć): ")
+        if url.lower() == "koniec":
+            break
+
+        # Dodaj 'https://' jeśli schemat nie jest obecny
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+
+        wynik = sprawdz_dostepnosc_url(url)
+        if wynik is None:
+            print(f"Nie udało się sprawdzić dostępności URL: {url}")
+        elif wynik:  #wynik jest True
+            print(f"URL jest dostępny")
+        else:
+            print(f"URL jest niedostępny")
+
+
+
+if __name__ == "__main__":
+    # Konfigurujemy ponawianie prób połączenia.  Domyślnie requests ponawia kilka razy.
+    # Ustawiamy na 0, bo sami obsługujemy błędy.
+    s = requests.Session()
+    s.mount('http://', requests.adapters.HTTPAdapter(max_retries=0))
+    s.mount('https://', requests.adapters.HTTPAdapter(max_retries=0))
+
+    # Wyłączamy ostrzeżenia o niesprawdzonym SSL.  Przydatne, jeśli testujesz
+    # strony z samopodpisanymi certyfikatami (ale niezalecane w produkcji).
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    main()
