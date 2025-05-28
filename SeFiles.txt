@@ -1,53 +1,48 @@
-# Ścieżka do pliku z listą hostów
-$hostsFile = ".\hosts.txt"
+# Bieżąca data bez godziny
+$today = (Get-Date).Date
 
-# Sprawdź, czy plik istnieje
-if (-Not (Test-Path $hostsFile)) {
-    Write-Error "Plik z listą hostów '$hostsFile' nie istnieje."
-    exit
+# Lista hostów
+$hosts = Get-Content -Path ".\hosts.txt"
+
+# Katalog wyjściowy
+$outputDir = ".\LogonFailures"
+if (!(Test-Path $outputDir)) {
+    New-Item -Path $outputDir -ItemType Directory | Out-Null
 }
 
-# Pobierz listę hostów z pliku
-$hosts = Get-Content $hostsFile
-
-# Ustaw datę początku i końca dnia wczorajszego
-$yesterdayStart = (Get-Date).AddDays(-1).Date
-$yesterdayEnd = $yesterdayStart.AddDays(1).AddSeconds(-1)
-
 foreach ($host in $hosts) {
-    Write-Output "==============================="
-    Write-Output "Host: $host"
-    Write-Output "==============================="
+    Write-Host "Przetwarzanie hosta: $host"
 
     try {
-        # Pobierz zdarzenia 4625 z Security z dnia wczorajszego z zdalnego hosta
-        $events = Get-WinEvent -ComputerName $host -FilterHashtable @{
-            LogName = 'Security'
-            Id = 4625
-            StartTime = $yesterdayStart
-            EndTime = $yesterdayEnd
-        } -ErrorAction Stop
+        # Filtr XML dla Event ID 4625
+        $filterXml = @"
+<QueryList>
+  <Query Id="0" Path="Security">
+    <Select Path="Security">
+      *[System[(EventID=4625) and TimeCreated[@SystemTime >= '$($today.ToUniversalTime().ToString("o"))']]]
+    </Select>
+  </Query>
+</QueryList>
+"@
 
-        if ($events.Count -eq 0) {
-            Write-Output "Brak nieudanych logowań (4625) z dnia $($yesterdayStart.ToString('yyyy-MM-dd')) na hoście $host."
-        } else {
-            # Nazwa pliku wynikowego, np. Nieudane_logowania_4625_host1_2025-05-27.txt
-            $outputFile = "Nieudane_logowania_4625_${host}_$($yesterdayStart.ToString('yyyy-MM-dd')).txt"
+        # Pobranie zdarzeń zdalnie
+        $events = Get-WinEvent -ComputerName $host -FilterXml $filterXml -ErrorAction Stop
 
-            # Przygotuj zawartość do zapisu
-            $outputContent = foreach ($event in $events) {
-                $timeCreated = $event.TimeCreated
-                $message = $event.Message
-                "Czas: $timeCreated`nSzczegóły zdarzenia:`n$message`n-------------------------------------------"
-            }
-
-            # Zapisz do pliku
-            $outputContent | Out-File -FilePath $outputFile -Encoding UTF8
-
-            Write-Output "Zapisano $($events.Count) zdarzeń do pliku: $outputFile"
+        # Formatowanie wyników
+        $output = $events | ForEach-Object {
+            "$($_.TimeCreated) | $($_.Message)"
         }
+
+        # Tworzenie ścieżki pliku z datą
+        $dateStr = $today.ToString("yyyyMMdd")
+        $outputPath = Join-Path $outputDir "logon_failures_${host}_$dateStr.txt"
+
+        # Zapisz dane
+        $output | Out-File -FilePath $outputPath -Encoding UTF8
+
+        Write-Host "✔ Zapisano: $outputPath"
     }
     catch {
-        Write-Warning "Nie udało się pobrać zdarzeń z hosta $host. Błąd: $_"
+        Write-Warning "Błąd podczas przetwarzania hosta $host: $_"
     }
 }
