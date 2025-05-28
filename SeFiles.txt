@@ -1,0 +1,22 @@
+# Pobierz datę początku bieżącego dnia (godzina 00:00:00)
+$startDate = (Get-Date).Date
+
+# Pobierz zdarzenia z dziennika Security o ID 4625 od początku dnia do teraz
+$events = Get-WinEvent -FilterHashtable @{
+    LogName = 'Security'
+    Id = 4625
+    StartTime = $startDate
+} 
+
+# Wyświetl zdarzenia
+$events | ForEach-Object {
+    # Można wyciągnąć dodatkowe informacje z właściwości zdarzenia, np. czas, użytkownika, opis
+    $timeCreated = $_.TimeCreated
+    $message = $_.Message
+
+    # Wyświetl podstawowe informacje
+    Write-Output "Czas: $timeCreated"
+    Write-Output "Szczegóły zdarzenia:"
+    Write-Output $message
+    Write-Output "-------------------------------------------"
+}
