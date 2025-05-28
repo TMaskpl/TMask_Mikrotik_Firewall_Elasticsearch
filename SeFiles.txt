@@ -1,4 +1,4 @@
-# Ścieżka do pliku z listą hostname
+# Ścieżka do pliku z listą hostów
 $hostsFile = ".\hosts.txt"
 
 # Sprawdź, czy plik istnieje
@@ -10,8 +10,9 @@ if (-Not (Test-Path $hostsFile)) {
 # Pobierz listę hostów z pliku
 $hosts = Get-Content $hostsFile
 
-# Pobierz datę początku bieżącego dnia
-$startDate = (Get-Date).Date
+# Ustaw datę początku i końca dnia wczorajszego
+$yesterdayStart = (Get-Date).AddDays(-1).Date
+$yesterdayEnd = $yesterdayStart.AddDays(1).AddSeconds(-1)
 
 foreach ($host in $hosts) {
     Write-Output "==============================="
@@ -19,25 +20,31 @@ foreach ($host in $hosts) {
     Write-Output "==============================="
 
     try {
-        # Pobierz zdarzenia z Security o ID 4625 z bieżącego dnia z zdalnego hosta
+        # Pobierz zdarzenia 4625 z Security z dnia wczorajszego z zdalnego hosta
         $events = Get-WinEvent -ComputerName $host -FilterHashtable @{
             LogName = 'Security'
             Id = 4625
-            StartTime = $startDate
+            StartTime = $yesterdayStart
+            EndTime = $yesterdayEnd
         } -ErrorAction Stop
 
         if ($events.Count -eq 0) {
-            Write-Output "Brak nieudanych logowań (4625) z bieżącego dnia na hoście $host."
+            Write-Output "Brak nieudanych logowań (4625) z dnia $($yesterdayStart.ToString('yyyy-MM-dd')) na hoście $host."
         } else {
-            foreach ($event in $events) {
+            # Nazwa pliku wynikowego, np. Nieudane_logowania_4625_host1_2025-05-27.txt
+            $outputFile = "Nieudane_logowania_4625_${host}_$($yesterdayStart.ToString('yyyy-MM-dd')).txt"
+
+            # Przygotuj zawartość do zapisu
+            $outputContent = foreach ($event in $events) {
                 $timeCreated = $event.TimeCreated
                 $message = $event.Message
-
-                Write-Output "Czas: $timeCreated"
-                Write-Output "Szczegóły zdarzenia:"
-                Write-Output $message
-                Write-Output "-------------------------------------------"
+                "Czas: $timeCreated`nSzczegóły zdarzenia:`n$message`n-------------------------------------------"
             }
+
+            # Zapisz do pliku
+            $outputContent | Out-File -FilePath $outputFile -Encoding UTF8
+
+            Write-Output "Zapisano $($events.Count) zdarzeń do pliku: $outputFile"
         }
     }
     catch {
