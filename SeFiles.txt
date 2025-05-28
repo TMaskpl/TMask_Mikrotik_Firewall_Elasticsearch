@@ -1,22 +1,46 @@
-# Pobierz datę początku bieżącego dnia (godzina 00:00:00)
+# Ścieżka do pliku z listą hostname
+$hostsFile = ".\hosts.txt"
+
+# Sprawdź, czy plik istnieje
+if (-Not (Test-Path $hostsFile)) {
+    Write-Error "Plik z listą hostów '$hostsFile' nie istnieje."
+    exit
+}
+
+# Pobierz listę hostów z pliku
+$hosts = Get-Content $hostsFile
+
+# Pobierz datę początku bieżącego dnia
 $startDate = (Get-Date).Date
 
-# Pobierz zdarzenia z dziennika Security o ID 4625 od początku dnia do teraz
-$events = Get-WinEvent -FilterHashtable @{
-    LogName = 'Security'
-    Id = 4625
-    StartTime = $startDate
-} 
+foreach ($host in $hosts) {
+    Write-Output "==============================="
+    Write-Output "Host: $host"
+    Write-Output "==============================="
 
-# Wyświetl zdarzenia
-$events | ForEach-Object {
-    # Można wyciągnąć dodatkowe informacje z właściwości zdarzenia, np. czas, użytkownika, opis
-    $timeCreated = $_.TimeCreated
-    $message = $_.Message
+    try {
+        # Pobierz zdarzenia z Security o ID 4625 z bieżącego dnia z zdalnego hosta
+        $events = Get-WinEvent -ComputerName $host -FilterHashtable @{
+            LogName = 'Security'
+            Id = 4625
+            StartTime = $startDate
+        } -ErrorAction Stop
 
-    # Wyświetl podstawowe informacje
-    Write-Output "Czas: $timeCreated"
-    Write-Output "Szczegóły zdarzenia:"
-    Write-Output $message
-    Write-Output "-------------------------------------------"
+        if ($events.Count -eq 0) {
+            Write-Output "Brak nieudanych logowań (4625) z bieżącego dnia na hoście $host."
+        } else {
+            foreach ($event in $events) {
+                $timeCreated = $event.TimeCreated
+                $message = $event.Message
+
+                Write-Output "Czas: $timeCreated"
+                Write-Output "Szczegóły zdarzenia:"
+                Write-Output $message
+                Write-Output "-------------------------------------------"
+            }
+        }
+    }
+    catch {
+        Write-Warning "Nie udało się pobrać zdarzeń z hosta $host. Błąd: $_"
+    }
 }
