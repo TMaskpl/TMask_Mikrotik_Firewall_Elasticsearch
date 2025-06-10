@@ -1,0 +1,71 @@
+stage('Run Ansible Tower Playbook') {
+    steps {
+        script {
+            def maxRetries = 3
+            def retryCount = 0
+            def success = false
+            
+            while (retryCount < maxRetries && !success) {
+                try {
+                    echo "Próba ${retryCount + 1}/${maxRetries}: Uruchamianie playbook w Ansible Tower..."
+                    
+                    // Uruchomienie playbook w Ansible Tower
+                    def output = sh(
+                        script: """
+                            # Przykład wywołania API Ansible Tower/AWX
+                            curl -k -X POST \\
+                                -H "Authorization: Bearer \${ANSIBLE_TOWER_TOKEN}" \\
+                                -H "Content-Type: application/json" \\
+                                -d '{"extra_vars": {}}' \\
+                                https://your-tower-url/api/v2/job_templates/YOUR_TEMPLATE_ID/launch/
+                            
+                            # Alternatywnie, jeśli używasz tower-cli:
+                            # tower-cli job launch --job-template="Your Playbook Template" --monitor --wait
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Parsowanie JENKINS_EXPORT output
+                    def lCount = null
+                    output.split('\n').each { line ->
+                        if (line.contains('l_count:')) {
+                            def match = line =~ /l_count:\s*"([^"]+)"/
+                            if (match) {
+                                lCount = match[0][1].trim()
+                            }
+                        }
+                    }
+                    
+                    echo "Otrzymany l_count: ${lCount}"
+                    
+                    if (lCount == "0") {
+                        echo "✅ Playbook wykonany pomyślnie!"
+                        success = true
+                        currentBuild.result = 'SUCCESS'
+                    } else {
+                        retryCount++
+                        if (retryCount < maxRetries) {
+                            echo "❌ l_count = ${lCount} (oczekiwano 0). Oczekiwanie 1 minuty przed kolejną próbą..."
+                            sleep(time: 1, unit: 'MINUTES')
+                        } else {
+                            echo "❌ Wszystkie próby wyczerpane. Ostatni l_count: ${lCount}"
+                            currentBuild.result = 'FAILURE'
+                            error("Ansible Tower playbook zwrócił l_count != 0 po ${maxRetries} próbach")
+                        }
+                    }
+                    
+                } catch (Exception e) {
+                    retryCount++
+                    if (retryCount < maxRetries) {
+                        echo "❌ Błąd podczas wykonywania: ${e.getMessage()}. Oczekiwanie 1 minuty przed kolejną próbą..."
+                        sleep(time: 1, unit: 'MINUTES')
+                    } else {
+                        echo "❌ Wszystkie próby wyczerpane. Ostatni błąd: ${e.getMessage()}"
+                        currentBuild.result = 'FAILURE'
+                                                    error("Ansible Tower playbook zwrócił l_count != 0 po ${maxRetries} próbach")
+                    }
+                }
+            }
+        }
+    }
+}
