@@ -1,4 +1,20 @@
-stage('Run Ansible Tower Playbook') {
+pipeline {
+    agent any
+    
+    triggers {
+        // Uruchamianie co 10 minut
+        cron('*/10 * * * *')
+    }
+    
+    options {
+        // Dodawanie timestamp do logów
+        timestamps()
+        // Opcjonalnie: timeout dla całego pipeline
+        timeout(time: 30, unit: 'MINUTES')
+    }
+    
+    stages {
+        stage('Run Ansible Tower Playbook') {
     steps {
         script {
             def maxRetries = 3
@@ -42,6 +58,10 @@ stage('Run Ansible Tower Playbook') {
                         echo "✅ Playbook wykonany pomyślnie!"
                         success = true
                         currentBuild.result = 'SUCCESS'
+                        
+                        // Wysłanie metryki sukcesu do Pushgateway
+                        sendMetricToPushgateway(0)
+                        
                     } else {
                         retryCount++
                         if (retryCount < maxRetries) {
@@ -50,6 +70,10 @@ stage('Run Ansible Tower Playbook') {
                         } else {
                             echo "❌ Wszystkie próby wyczerpane. Ostatni l_count: ${lCount}"
                             currentBuild.result = 'FAILURE'
+                            
+                            // Wysłanie metryki błędu do Pushgateway
+                            sendMetricToPushgateway(1)
+                            
                             error("Ansible Tower playbook zwrócił l_count != 0 po ${maxRetries} próbach")
                         }
                     }
@@ -68,4 +92,26 @@ stage('Run Ansible Tower Playbook') {
             }
         }
     }
+    
+    // Funkcja do wysyłania metryki do Pushgateway
+    def sendMetricToPushgateway(value) {
+        try {
+            def jobName = env.JOB_NAME.replaceAll('/', '_')
+            def metricName = "ansible_playbook_status"
+            
+            sh """
+                echo "${metricName}{job=\\"${jobName}\\",instance=\\"jenkins\\"} ${value}" | \\
+                curl -X POST \\
+                    --data-binary @- \\
+                    http://pushgateway:9091/metrics/job/${jobName}/instance/jenkins
+            """
+            
+            echo "📊 Metryka wysłana do Pushgateway: ${metricName}=${value}"
+            
+        } catch (Exception e) {
+            echo "⚠️ Błąd podczas wysyłania metryki do Pushgateway: ${e.getMessage()}"
+            // Nie przerywamy pipeline'a z powodu błędu metryki
+        }
+    }
+}
 }
