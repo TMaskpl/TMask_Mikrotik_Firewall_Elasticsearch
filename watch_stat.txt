@@ -98,15 +98,23 @@ pipeline {
         try {
             def jobName = env.JOB_NAME.replaceAll('/', '_')
             def metricName = "ansible_playbook_status"
+            def pushgatewayUrl = "http://pushgateway:9091"
             
-            sh """
-                echo "${metricName}{job=\\"${jobName}\\",instance=\\"jenkins\\"} ${value}" | \\
-                curl -X POST \\
-                    --data-binary @- \\
-                    http://pushgateway:9091/metrics/job/${jobName}/instance/jenkins
-            """
+            def metricData = "${metricName}{job=\"${jobName}\",instance=\"jenkins\"} ${value}"
             
-            echo "📊 Metryka wysłana do Pushgateway: ${metricName}=${value}"
+            def connection = new URL("${pushgatewayUrl}/metrics/job/${jobName}/instance/jenkins").openConnection()
+            connection.setRequestMethod("POST")
+            connection.setRequestProperty("Content-Type", "text/plain")
+            connection.setDoOutput(true)
+            
+            connection.getOutputStream().write(metricData.getBytes("UTF-8"))
+            
+            def responseCode = connection.getResponseCode()
+            if (responseCode == 200 || responseCode == 202) {
+                echo "📊 Metryka wysłana do Pushgateway: ${metricName}=${value}"
+            } else {
+                echo "⚠️ Pushgateway odpowiedział kodem: ${responseCode}"
+            }
             
         } catch (Exception e) {
             echo "⚠️ Błąd podczas wysyłania metryki do Pushgateway: ${e.getMessage()}"
