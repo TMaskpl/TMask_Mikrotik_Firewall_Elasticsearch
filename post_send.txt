@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+    
+    stages {
+        stage('Build') {
+            steps {
+                echo 'Building the application...'
+                // Tutaj umieść swoje kroki budowania
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                echo 'Running tests...'
+                // Tutaj umieść swoje testy
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                echo 'Deploying application...'
+                // Tutaj umieść kroki deploymentu
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Pobierz aktualną godzinę i minuty
+                def currentTime = new Date()
+                def currentHour = currentTime.format('HH')
+                def currentMinute = currentTime.format('mm')
+                
+                // Sprawdź czy nie jest godzina 23:5*
+                def shouldSendEmail = !(currentHour == '23' && currentMinute.startsWith('5'))
+                
+                if (shouldSendEmail) {
+                    echo "Wysyłanie emaila - aktualna godzina: ${currentHour}:${currentMinute}"
+                    
+                    emailext (
+                        subject: "Jenkins Pipeline Status: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                        body: """
+                        Pipeline: ${env.JOB_NAME}
+                        Build Number: ${env.BUILD_NUMBER}
+                        Build Status: ${currentBuild.currentResult}
+                        Build URL: ${env.BUILD_URL}
+                        
+                        Czas wykonania: ${currentTime.format('yyyy-MM-dd HH:mm:ss')}
+                        """,
+                        to: 'your-email@example.com',
+                        from: 'jenkins@yourcompany.com'
+                    )
+                } else {
+                    echo "Pomijanie wysyłania emaila - aktualna godzina: ${currentHour}:${currentMinute} (23:5*)"
+                }
+            }
+        }
+        
+        success {
+            script {
+                def currentTime = new Date()
+                def currentHour = currentTime.format('HH')
+                def currentMinute = currentTime.format('mm')
+                
+                def shouldSendEmail = !(currentHour == '23' && currentMinute.startsWith('5'))
+                
+                if (shouldSendEmail) {
+                    echo "Pipeline zakończony sukcesem!"
+                    // Dodatkowe akcje dla sukcesu
+                }
+            }
+        }
+        
+        failure {
+            script {
+                def currentTime = new Date()
+                def currentHour = currentTime.format('HH')
+                def currentMinute = currentTime.format('mm')
+                
+                def shouldSendEmail = !(currentHour == '23' && currentMinute.startsWith('5'))
+                
+                if (shouldSendEmail) {
+                    emailext (
+                        subject: "BŁĄD: Jenkins Pipeline Failed - ${env.JOB_NAME}",
+                        body: """
+                        UWAGA! Pipeline zakończony niepowodzeniem.
+                        
+                        Pipeline: ${env.JOB_NAME}
+                        Build Number: ${env.BUILD_NUMBER}
+                        Build URL: ${env.BUILD_URL}
+                        
+                        Sprawdź logi aby poznać przyczynę błędu.
+                        """,
+                        to: 'alerts@yourcompany.com',
+                        from: 'jenkins@yourcompany.com'
+                    )
+                }
+            }
+        }
+    }
+}
