@@ -1,0 +1,83 @@
+import requests
+import os
+
+# --- Konfiguracja ---
+AWX_HOST = os.getenv('AWX_HOST', 'https://your-awx-instance.com') # Zmień na swój adres AWX lub ustaw zmienną środowiskową
+AWX_TOKEN = os.getenv('AWX_TOKEN', 'YOUR_AWX_TOKEN') # Zmień na swój token lub ustaw zmienną środowiskową
+JOB_TEMPLATE_NAME = "Job1" # Nazwa szablonu zadania, który chcesz sprawdzić i zakończyć
+
+# Nagłówki autoryzacyjne
+headers = {
+    "Authorization": f"Bearer {AWX_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+def get_job_template_id(template_name):
+    """Pobiera ID szablonu zadania na podstawie jego nazwy."""
+    url = f"{AWX_HOST}/api/v2/job_templates/"
+    try:
+        response = requests.get(url, headers=headers, verify=False) # verify=False jeśli masz certyfikat self-signed
+        response.raise_for_status()
+        templates = response.json().get('results', [])
+        for template in templates:
+            if template.get('name') == template_name:
+                return template.get('id')
+    except requests.exceptions.RequestException as e:
+        print(f"Błąd podczas pobierania szablonów zadań: {e}")
+    return None
+
+def get_running_jobs(job_template_id):
+    """Pobiera listę uruchomionych zadań dla danego szablonu zadania."""
+    url = f"{AWX_HOST}/api/v2/jobs/"
+    params = {
+        "job_template": job_template_id,
+        "status__in": "running,pending,waiting" # Statusy, które uznajemy za "działające"
+    }
+    try:
+        response = requests.get(url, headers=headers, params=params, verify=False)
+        response.raise_for_status()
+        return response.json().get('results', [])
+    except requests.exceptions.RequestException as e:
+        print(f"Błąd podczas pobierania uruchomionych zadań: {e}")
+    return []
+
+def cancel_job(job_id):
+    """Anuluje pojedyncze zadanie."""
+    url = f"{AWX_HOST}/api/v2/jobs/{job_id}/cancel/"
+    try:
+        response = requests.post(url, headers=headers, verify=False)
+        response.raise_for_status()
+        print(f"Zadanie o ID {job_id} zostało pomyślnie anulowane.")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Błąd podczas anulowania zadania o ID {job_id}: {e}")
+        return False
+
+def main():
+    print(f"Sprawdzam zadania dla szablonu: '{JOB_TEMPLATE_NAME}'...")
+    template_id = get_job_template_id(JOB_TEMPLATE_NAME)
+
+    if not template_id:
+        print(f"Nie znaleziono szablonu zadania o nazwie '{JOB_TEMPLATE_NAME}'.")
+        return
+
+    print(f"ID szablonu '{JOB_TEMPLATE_NAME}': {template_id}")
+    running_jobs = get_running_jobs(template_id)
+
+    if not running_jobs:
+        print(f"Brak działających zadań dla szablonu '{JOB_TEMPLATE_NAME}'.")
+        return
+
+    print(f"Znaleziono {len(running_jobs)} działających zadań dla szablonu '{JOB_TEMPLATE_NAME}':")
+    for job in running_jobs:
+        print(f"  - ID Zadania: {job.get('id')}, Status: {job.get('status')}, Nazwa: {job.get('name')}")
+
+    confirm = input("Czy na pewno chcesz zakończyć wszystkie te zadania? (tak/nie): ")
+    if confirm.lower() == 'tak':
+        for job in running_jobs:
+            cancel_job(job.get('id'))
+    else:
+        print("Anulowanie zadań zostało wstrzymane.")
+
+if __name__ == "__main__":
+    main()
