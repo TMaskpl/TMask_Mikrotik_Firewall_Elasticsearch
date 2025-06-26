@@ -38,3 +38,69 @@ producer.send(topic_name, value=wiadomosc)
 producer.flush()
 
 print("Wiadomość została wysłana.")
+
+
+
+
+
+#########################################################################33
+
+
+import json
+from confluent_kafka import Producer
+import ssl
+
+# Dane konfiguracyjne
+bootstrap_servers = ['broker1:9093']  # Adresy brokerów
+topic_name = 'moj_topic'
+
+# Ścieżki do certyfikatów SSL
+ssl_cafile = '/ścieżka/do/ca-cert.pem'
+ssl_certfile = '/ścieżka/do/client-cert.pem'
+ssl_keyfile = '/ścieżka/do/client-key.pem'
+
+# Konfiguracja SSL
+conf = {
+    'bootstrap.servers': ','.join(bootstrap_servers),
+    'security.protocol': 'SSL',
+    'ssl.ca.location': ssl_cafile,
+    'ssl.certificate.location': ssl_certfile,
+    'ssl.key.location': ssl_keyfile,
+    'client.id': 'my_producer',
+    'acks': 'all',  # Czekaj na potwierdzenie od wszystkich brokerów
+}
+
+# Tworzenie producenta
+producer = Producer(conf)
+
+# Funkcja do serializacji JSON
+def json_serializer(value):
+    return json.dumps(value).encode('utf-8')
+
+# Przykładowa wiadomość JSON
+wiadomosc = {
+    'id': 123,
+    'wiadomosc': 'To jest test',
+    'data': '2025-06-26'
+}
+
+# Funkcja do wysyłania wiadomości
+def send_message(producer, topic, value):
+    producer.produce(topic, value=json_serializer(value))
+    producer.flush()
+    print(f"Wiadomość wysłana do tematu '{topic}'")
+
+# Wysyłanie wiadomości
+send_message(producer, topic_name, wiadomosc)
+
+
+
+
+
+
+
+
+############################################################33
+
+# openssl s_client -connect broker1:9093 -CAfile /ścieżka/do/ca-cert.pem -cert /ścieżka/do/client-cert.pem -key /ścieżka/do/client-key.pem
+
