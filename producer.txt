@@ -1,0 +1,40 @@
+import json
+from kafka import KafkaProducer
+import ssl
+
+# Dane konfiguracyjne
+bootstrap_servers = ['broker1:9093']  # Adresy brokerów
+topic_name = 'moj_topic'
+
+# Ścieżki do certyfikatów SSL
+ssl_cafile = '/ścieżka/do/ca-cert.pem'
+ssl_certfile = '/ścieżka/do/client-cert.pem'
+ssl_keyfile = '/ścieżka/do/client-key.pem'
+
+# Konfiguracja SSL
+ssl_context = ssl.create_default_context(
+    purpose=ssl.Purpose.SERVER_AUTH,
+    cafile=ssl_cafile
+)
+ssl_context.load_cert_chain(certfile=ssl_certfile, keyfile=ssl_keyfile)
+
+# Tworzenie producenta
+producer = KafkaProducer(
+    bootstrap_servers=bootstrap_servers,
+    security_protocol='SSL',
+    ssl_context=ssl_context,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Przykładowa wiadomość JSON
+wiadomosc = {
+    'id': 123,
+    'wiadomosc': 'To jest test',
+    'data': '2025-06-26'
+}
+
+# Wysyłanie wiadomości
+producer.send(topic_name, value=wiadomosc)
+producer.flush()
+
+print("Wiadomość została wysłana.")
